@@ -121,9 +121,18 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   // Auth Initialization
+  const [initError, setInitError] = useState<string | null>(null);
+
+  // Auth Initialization
   useEffect(() => {
     const initAuth = async () => {
-      await signInAnonymously(auth);
+      try {
+        await signInAnonymously(auth);
+      } catch (e: any) {
+        console.error("Auth Error:", e);
+        setInitError(e.message);
+        setLoading(false);
+      }
     };
     initAuth();
 
@@ -131,15 +140,20 @@ export default function App() {
       setUser(u);
       if (u) {
         // Fetch Profile
-        const docRef = doc(db, 'artifacts', appId, 'users', u.uid, 'settings', 'profile');
-        const snap = await getDoc(docRef);
-        if (snap.exists()) setProfile(snap.data());
+        try {
+          const docRef = doc(db, 'artifacts', appId, 'users', u.uid, 'settings', 'profile');
+          const snap = await getDoc(docRef);
+          if (snap.exists()) setProfile(snap.data());
+        } catch (e) {
+          console.error("Profile Fetch Error:", e);
+        }
       }
       setLoading(false);
     });
     return () => unsub();
   }, []);
 
+  if (initError) return <LoadingScreen text={`ERROR: ${initError.toUpperCase()}`} />;
   if (loading) return <LoadingScreen text="ESTABLISHING SECURE UPLINK..." />;
   if (!user) return <LoadingScreen text="AUTHENTICATING..." />;
   if (!profile) return <Registration user={user} onComplete={setProfile} />;
