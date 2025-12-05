@@ -41,13 +41,13 @@ import clsx from 'clsx';
 // --- 1. CONFIGURATION ---
 // !!! IMPORTANT: REPLACE THIS WITH YOUR FIREBASE KEYS !!!
 const firebaseConfig = {
-  apiKey: "AIzaSyCq8XXgfkFkv7eSvAcMgm6nIoalL-we5D4",
-  authDomain: "qrypt-app.firebaseapp.com",
-  projectId: "qrypt-app",
-  storageBucket: "qrypt-app.firebasestorage.app",
-  messagingSenderId: "235484035256",
-  appId: "1:235484035256:web:9d258f60c875bb00b45c4d",
-  measurementId: "G-HV3T708VPH"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase
