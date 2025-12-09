@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { KeyRound, User, Copy, Check, AlertTriangle, Loader2, ShieldCheck, Lock, ChevronRight, RefreshCw } from 'lucide-react';
+import { KeyRound, User, Copy, Check, AlertTriangle, Loader2, ShieldCheck, ChevronRight, RefreshCw } from 'lucide-react';
 import { CryptoService } from '../lib/crypto';
 import { RecoveryService } from '../lib/recovery';
 import { db, auth, APP_ID } from '../lib/firebase';
@@ -17,13 +17,10 @@ const generateSystemId = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let result = '';
   for (let i = 0; i < 3; i++) {
-    // Map random number to char
     const val = array[i] % chars.length;
     result += chars.charAt(val);
     if (i < 2) result += '-';
   }
-  // Format: A-B-C (simple 3 char) or expand logic as needed. 
-  // Let's do the original format A1-B2-C3
   let longResult = '';
   const longArray = new Uint32Array(6);
   window.crypto.getRandomValues(longArray);
@@ -41,7 +38,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
   // Login State
   const [loginTab, setLoginTab] = useState<'phrase' | 'key'>('phrase');
   const [loginUsername, setLoginUsername] = useState('');
-  const [loginKey, setLoginKey] = useState(''); // Phrase or PEM
+  const [loginKey, setLoginKey] = useState('');
 
   // Registration State
   const [regUsername, setRegUsername] = useState('');
@@ -55,7 +52,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Clear error when switching modes
   useEffect(() => { setError(null); }, [mode, loginTab]);
 
   const initAuth = async () => {
@@ -64,8 +60,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     }
     return auth.currentUser;
   };
-
-  // --- REGISTRATION FLOW ---
 
   const handleGenerateIdentity = async () => {
     setError(null);
@@ -76,20 +70,16 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
     setLoading(true);
     try {
-      // 1. Check Uniqueness
       const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'profiles'), where('username', '==', regUsername.toLowerCase()));
       const snap = await getDocs(q);
       if (!snap.empty) throw new Error("Username already taken.");
 
-      // 2. Generate Keys
       const keys = await CryptoService.generateKeys();
       const mnemonic = RecoveryService.generateMnemonic();
 
       setGeneratedKey(keys.priv);
       setGeneratedPhrase(mnemonic);
 
-      // Store Public Key temporarily in memory (or local state)
-      // We don't save to DB yet.
       localStorage.setItem(`temp_pub_${regUsername}`, keys.pub);
 
       setStep('keys_generated');
@@ -118,7 +108,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       const pubKey = localStorage.getItem(`temp_pub_${regUsername}`);
       if (!pubKey) throw new Error("Key session lost. Please restart.");
 
-      // Encrypt Private Key for Recovery
       const recoveryKey = await RecoveryService.deriveKeyFromMnemonic(generatedPhrase);
       const encryptedPrivKey = await CryptoService.symEncrypt(generatedKey, recoveryKey);
 
@@ -135,15 +124,11 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         createdAt: serverTimestamp()
       };
 
-      // Atomic-like Save
-      // 1. Private Profile
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'settings', 'profile'), profileData);
-      // 2. Public Profile
       await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'profiles', user.uid), profileData);
 
-      // Local Session
       localStorage.setItem('qrypt_username', regUsername);
-      localStorage.setItem('qrypt_private_key', generatedKey); // Raw key for current session
+      localStorage.setItem('qrypt_private_key', generatedKey);
 
       onLogin(user);
     } catch (e: any) {
@@ -152,8 +137,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       setLoading(false);
     }
   };
-
-  // --- LOGIN FLOW ---
 
   const handleLogin = async () => {
     setError(null);
@@ -170,7 +153,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     try {
       const user = await initAuth();
 
-      // 1. Fetch Profile Publicly
       const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'profiles'), where('username', '==', loginUsername.toLowerCase()));
       const snap = await getDocs(q);
 
@@ -180,7 +162,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       let privKeyToUse = '';
 
       if (loginTab === 'phrase') {
-        // Recovery Mode
         if (!profileData.encryptedPrivateKey) throw new Error("This account has no recovery setup.");
         const recoveryKey = await RecoveryService.deriveKeyFromMnemonic(loginKey);
         try {
@@ -189,11 +170,9 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
           throw new Error("Invalid Recovery Phrase.");
         }
       } else {
-        // Raw Key Mode
         privKeyToUse = loginKey.trim();
       }
 
-      // 2. Verify Key Pair
       const testMsg = "QREF_VERIFY";
       const encrypted = await CryptoService.encrypt(testMsg, profileData.publicKey);
       if (!encrypted) throw new Error("Public Key Error");
@@ -201,7 +180,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       const decrypted = await CryptoService.decrypt(encrypted, privKeyToUse);
       if (decrypted !== testMsg) throw new Error("Key mismatch! This private key doesn't belong to this user.");
 
-      // 3. Success
       localStorage.setItem('qrypt_username', loginUsername);
       localStorage.setItem('qrypt_private_key', privKeyToUse);
 
@@ -220,8 +198,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // --- RENDER HELPERS ---
-
   const colors = [
     'from-cyan-500 to-blue-600',
     'from-emerald-500 to-green-600',
@@ -233,7 +209,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-2xl mb-4 shadow-lg shadow-cyan-500/20">
             <KeyRound className="w-8 h-8 text-white" />
@@ -244,7 +219,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
         <div className="bg-slate-900/80 backdrop-blur-md rounded-2xl p-6 border border-slate-800 shadow-2xl">
 
-          {/* Mode Switch (Only visible in init) */}
           {step === 'init' && (
             <div className="flex gap-2 mb-6 bg-slate-950/50 p-1 rounded-xl">
               <button onClick={() => setMode('register')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'register' ? 'bg-slate-800 text-white shadow' : 'text-gray-400 hover:text-gray-200'}`}>New Identity</button>
@@ -252,7 +226,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
             </div>
           )}
 
-          {/* ERROR BOX */}
           {error && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -260,7 +233,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
             </div>
           )}
 
-          {/* --- VIEW: LOGIN --- */}
           {mode === 'login' && (
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
               <div>
@@ -313,7 +285,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
             </div>
           )}
 
-          {/* --- VIEW: REGISTER STEP 1 (Generate) --- */}
           {mode === 'register' && step === 'init' && (
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
               <div>
@@ -340,7 +311,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
             </div>
           )}
 
-          {/* --- VIEW: REGISTER STEP 2 (Save Keys) --- */}
           {mode === 'register' && step === 'keys_generated' && (
             <div className="space-y-4 animate-in fade-in zoom-in-95">
               <div className="text-center">
@@ -377,7 +347,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
             </div>
           )}
 
-          {/* --- VIEW: REGISTER STEP 3 (Profile Setup) --- */}
           {mode === 'register' && step === 'profile_setup' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
               <div className="text-center">

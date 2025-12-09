@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { QrCode, Moon, Sun, Lock, Shield, Eye, Trash2, LogOut, Clock, Bell, Camera, AlertTriangle } from 'lucide-react';
+import { QrCode, Moon, Sun, Lock, LogOut, Clock, Camera, AlertTriangle } from 'lucide-react';
 import { db, APP_ID, auth } from '../lib/firebase';
 import { deleteDoc, doc } from 'firebase/firestore';
 
 interface SettingsScreenProps {
-  // Update Props to include profile object
   profile: any;
   onLogout: () => void;
 }
@@ -12,13 +11,10 @@ interface SettingsScreenProps {
 export function SettingsScreen({ profile, onLogout }: SettingsScreenProps) {
   const [darkMode, setDarkMode] = useState(true);
   const [biometric, setBiometric] = useState(localStorage.getItem('qrypt_biometric_enabled') === 'true');
-  const [readReceipts, setReadReceipts] = useState(true);
-  const [notifications, setNotifications] = useState(true);
   const [disappearingMessages, setDisappearingMessages] = useState('off');
   const [showQR, setShowQR] = useState(false);
   const [showPanicConfirm, setShowPanicConfirm] = useState(false);
 
-  // Use profile data
   const username = profile?.username || '@unknown';
   const displayName = profile?.displayName || username;
   const avatarColor = profile?.avatarColor || 'from-cyan-500 to-blue-600';
