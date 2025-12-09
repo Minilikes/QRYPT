@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Phone, Video, MoreVertical, Lock, Send, Plus, Smile, Mic, ThumbsUp, Heart, Reply, Copy, Trash2, Loader2, Bot } from 'lucide-react';
+import { ArrowLeft, Phone, Video, MoreVertical, Lock, Send, Plus, Smile, Mic, ThumbsUp, Heart, Reply, Copy, Trash2, Loader2, Bot, X } from 'lucide-react';
 import { db, APP_ID } from '../lib/firebase';
 import { collection, query, orderBy, onSnapshot, limit, getDoc, doc, addDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { CryptoService } from '../lib/crypto';
@@ -15,7 +15,7 @@ export function ChatInterface({ chatId, onBack, currentUser, userProfile }: Chat
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
-  const [_, setReplyingTo] = useState<any>(null); // Kept setReplyingTo as it is used, but renamed state var to _ to indicate unused
+  const [replyingTo, setReplyingTo] = useState<any>(null);
   const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [recipient, setRecipient] = useState<any>(null);
@@ -215,32 +215,43 @@ export function ChatInterface({ chatId, onBack, currentUser, userProfile }: Chat
       </div>
 
       {/* Input */}
-      <div className="p-4 bg-slate-900 border-t border-slate-800">
-        <div className="flex items-center gap-2">
-          <button className="p-2 text-gray-400 hover:text-white hover:bg-slate-800 rounded-lg transition"><Plus className="w-6 h-6" /></button>
-          <div className="flex-1 bg-slate-950 rounded-xl flex items-center px-4 py-2.5 border border-slate-800 focus-within:border-cyan-500 transition">
-            <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSend()} placeholder={`Message @${recipient?.username || 'user'}...`} className="flex-1 bg-transparent text-white outline-none" />
-            <button onClick={() => setShowEmoji(!showEmoji)} className="p-1 text-gray-400 hover:text-white"><Smile className="w-5 h-5" /></button>
+      <div className="bg-slate-900 border-t border-slate-800">
+        {replyingTo && (
+          <div className="px-4 py-2 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+            <div className="flex flex-col border-l-2 border-cyan-500 pl-2">
+              <span className="text-cyan-500 text-xs">Replying to {replyingTo.sender === 'me' ? 'yourself' : recipient?.username}</span>
+              <span className="text-gray-400 text-sm truncate max-w-[200px]">{replyingTo.text}</span>
+            </div>
+            <button onClick={() => setReplyingTo(null)}><X className="w-4 h-4 text-gray-400 hover:text-white" /></button>
           </div>
-          {inputText ? (
-            <button onClick={handleSend} className="p-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl hover:from-cyan-600 transition shadow-lg shadow-cyan-500/20"><Send className="w-5 h-5" /></button>
-          ) : (
-            <button className="p-2.5 text-gray-400 hover:text-white hover:bg-slate-800 rounded-xl transition"><Mic className="w-5 h-5" /></button>
-          )}
+        )}
+        <div className="p-4">
+          <div className="flex items-center gap-2">
+            <button className="p-2 text-gray-400 hover:text-white hover:bg-slate-800 rounded-lg transition"><Plus className="w-6 h-6" /></button>
+            <div className="flex-1 bg-slate-950 rounded-xl flex items-center px-4 py-2.5 border border-slate-800 focus-within:border-cyan-500 transition">
+              <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSend()} placeholder={`Message @${recipient?.username || 'user'}...`} className="flex-1 bg-transparent text-white outline-none" />
+              <button onClick={() => setShowEmoji(!showEmoji)} className="p-1 text-gray-400 hover:text-white"><Smile className="w-5 h-5" /></button>
+            </div>
+            {inputText ? (
+              <button onClick={handleSend} className="p-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl hover:from-cyan-600 transition shadow-lg shadow-cyan-500/20"><Send className="w-5 h-5" /></button>
+            ) : (
+              <button className="p-2.5 text-gray-400 hover:text-white hover:bg-slate-800 rounded-xl transition"><Mic className="w-5 h-5" /></button>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
-          <div className="fixed bg-slate-900 border border-slate-800 rounded-xl shadow-xl z-50 py-1 min-w-[150px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
-            <button onClick={() => setReplyingTo(messages.find(m => m.id === contextMenu.messageId))} className="w-full px-4 py-2 text-left text-white hover:bg-slate-800 flex items-center gap-2"><Reply className="w-4 h-4" /> Reply</button>
-            <button className="w-full px-4 py-2 text-left text-white hover:bg-slate-800 flex items-center gap-2"><Copy className="w-4 h-4" /> Copy</button>
-            <button onClick={() => handleDeleteMessage(contextMenu.messageId)} className="w-full px-4 py-2 text-left text-red-500 hover:bg-slate-800 flex items-center gap-2"><Trash2 className="w-4 h-4" /> Delete</button>
-          </div>
-        </>
-      )}
+        {/* Context Menu */}
+        {contextMenu && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
+            <div className="fixed bg-slate-900 border border-slate-800 rounded-xl shadow-xl z-50 py-1 min-w-[150px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
+              <button onClick={() => setReplyingTo(messages.find(m => m.id === contextMenu.messageId))} className="w-full px-4 py-2 text-left text-white hover:bg-slate-800 flex items-center gap-2"><Reply className="w-4 h-4" /> Reply</button>
+              <button className="w-full px-4 py-2 text-left text-white hover:bg-slate-800 flex items-center gap-2"><Copy className="w-4 h-4" /> Copy</button>
+              <button onClick={() => handleDeleteMessage(contextMenu.messageId)} className="w-full px-4 py-2 text-left text-red-500 hover:bg-slate-800 flex items-center gap-2"><Trash2 className="w-4 h-4" /> Delete</button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
