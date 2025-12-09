@@ -80,7 +80,7 @@ export function MainApp({ currentUser, userProfile, onLogout }: MainAppProps) {
         {/* Chat Interface */}
         <div className={`${selectedChatId && activeTab === 'chats' ? 'flex' : 'hidden md:flex'} flex-1 flex-col`}>
           {selectedChatId ? (
-            <ChatInterface chatId={selectedChatId} onBack={handleBackToList} currentUser={currentUser} />
+            <ChatInterface chatId={selectedChatId} onBack={handleBackToList} currentUser={currentUser} userProfile={userProfile} />
           ) : (
             <div className="flex-1 flex items-center justify-center bg-slate-950">
               <div className="text-center text-gray-500">

@@ -8,9 +8,10 @@ interface ChatInterfaceProps {
   chatId: string;
   onBack: () => void;
   currentUser: any;
+  userProfile: any;
 }
 
-export function ChatInterface({ chatId, onBack, currentUser }: ChatInterfaceProps) {
+export function ChatInterface({ chatId, onBack, currentUser, userProfile }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -55,7 +56,12 @@ export function ChatInterface({ chatId, onBack, currentUser }: ChatInterfaceProp
           let text = "Encrypted Block";
           try {
             if (m.senderId === currentUser.uid) {
-              text = m.plainText || "Encrypted";
+              // Decrypt sender's copy
+              if (m.senderContent) {
+                text = await CryptoService.decrypt(m.senderContent, myPriv);
+              } else {
+                text = m.plainText || "Encrypted";
+              }
             } else {
               text = await CryptoService.decrypt(m.content, myPriv);
             }
@@ -88,18 +94,23 @@ export function ChatInterface({ chatId, onBack, currentUser }: ChatInterfaceProp
     setInputText('');
     setReplyingTo(null);
 
-    // Encrypt
-    const encrypted = await CryptoService.encrypt(text, recipient.publicKey);
-    if (!encrypted) {
-      alert("Failed to encrypt message. Check recipient key.");
+    // Encrypt for Recipient
+    const encryptedForRecipient = await CryptoService.encrypt(text, recipient.publicKey);
+
+    // Encrypt for Sender (Me) so I can read it later
+    const encryptedForMe = await CryptoService.encrypt(text, userProfile.publicKey);
+
+    if (!encryptedForRecipient || !encryptedForMe) {
+      alert("Failed to encrypt message. Check keys.");
       return;
     }
 
     // Send
     await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'chats', chatId, 'messages'), {
       senderId: currentUser.uid,
-      content: encrypted,
-      plainText: text, // Store plain text for sender's view (in real app, use local storage or encrypt for self)
+      content: encryptedForRecipient,
+      senderContent: encryptedForMe,
+      // plainText removed for security
       timestamp: serverTimestamp()
     });
 

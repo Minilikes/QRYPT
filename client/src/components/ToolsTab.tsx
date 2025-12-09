@@ -49,21 +49,47 @@ function APKScanner() {
     const [scanning, setScanning] = useState(false);
     const [result, setResult] = useState<any>(null);
 
-    const handleScan = () => {
+    const handleScan = async () => {
         if (!file) return;
         setScanning(true);
-        // Mock Scan
-        setTimeout(() => {
+        setResult(null);
+
+        try {
+            // 1. Calculate File Hash (SHA-256)
+            const arrayBuffer = await file.arrayBuffer();
+            const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+            console.log(`File Hash calculated: ${hashHex}`);
+
+            // 2. Mock Backend Call (Simulating Cloud Function -> VirusTotal)
+            // In a real deployment, we would call:
+            // const scanFile = httpsCallable(functions, 'scanFile');
+            // const response = await scanFile({ hash: hashHex });
+
+            // Simulate network delay
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Check for specific dummy malware hash (e.g., EICAR test file or just random for demo if not specific)
+            // For this demo, we'll randomize based on the hash first char to be consistent
+            const isRisky = hashHex.startsWith('5') || hashHex.startsWith('a');
+
             setResult({
-                score: 85,
-                threats: [
-                    { name: 'Unsafe Permission: CAMERA', level: 'medium' },
-                    { name: 'Tracker: Google Analytics', level: 'low' }
-                ],
-                safe: true
+                score: isRisky ? 45 : 100,
+                threats: isRisky ? [
+                    { name: `Malware Detected (Hash: ${hashHex.substring(0, 8)}...)`, level: 'high' }
+                ] : [],
+                safe: !isRisky,
+                hash: hashHex
             });
+
+        } catch (e) {
+            console.error("Scan failed", e);
+            alert("Scan failed. See console.");
+        } finally {
             setScanning(false);
-        }, 2000);
+        }
     };
 
     const data = [
