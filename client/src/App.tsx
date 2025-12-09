@@ -55,8 +55,25 @@ export default function App() {
       // Use WebAuthn locally to verify presence (User Verification)
       // This triggers FaceID/TouchID/Windows Hello
       // We are creating a dummy credential to trigger the prompt
+      // Fetch challenge from server to prevent Replay Attacks
+      let challengeBuffer;
+      try {
+        const res = await fetch('/api/auth/challenge');
+        if (res.ok) {
+          const data = await res.json();
+          // data.challenge should be base64 or array
+          challengeBuffer = Uint8Array.from(atob(data.challenge), c => c.charCodeAt(0));
+        } else {
+          throw new Error("Server challenge failed");
+        }
+      } catch (e) {
+        // Fallback for offline/demo mode (NOT SECURE for production)
+        console.warn("Using local challenge (Insecure)");
+        challengeBuffer = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+      }
+
       const publicKey: PublicKeyCredentialCreationOptions = {
-        challenge: new Uint8Array([1, 2, 3, 4]), // Random challenge
+        challenge: challengeBuffer,
         rp: { name: "QRYPT Secure", id: window.location.hostname },
         user: {
           id: new Uint8Array([1]),
