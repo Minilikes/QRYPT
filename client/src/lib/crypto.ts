@@ -1,53 +1,102 @@
+// client/src/lib/crypto.ts
+import { MlKem1024 } from 'crystals-kyber-js';
+
+// Helper to convert Uint8Array to Base64
+const toBase64 = (arr: Uint8Array) => btoa(String.fromCharCode(...arr));
+// Helper to convert Base64 to Uint8Array
+const fromBase64 = (str: string) => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+
 export class CryptoService {
+    // 1. Generate Quantum-Safe Keys (Kyber-1024)
     static async generateKeys() {
-        const key = await window.crypto.subtle.generateKey(
-            { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-            true, ["encrypt", "decrypt"]
-        );
-        const pub = await window.crypto.subtle.exportKey("spki", key.publicKey);
-        const priv = await window.crypto.subtle.exportKey("pkcs8", key.privateKey);
+        // This generates a PQC Key Pair
+        const recipient = new MlKem1024();
+        const [pk, sk] = await recipient.generateKeyPair();
+
         return {
-            pub: btoa(String.fromCharCode(...new Uint8Array(pub))),
-            priv: btoa(String.fromCharCode(...new Uint8Array(priv)))
+            pub: toBase64(pk),
+            priv: toBase64(sk)
         };
     }
 
-    static async encrypt(text: string, recipientPubPem: string) {
+    // 2. Quantum-Safe Encryption (Hybrid: Kyber KEM + AES-256)
+    static async encrypt(text: string, recipientPubBase64: string) {
         try {
-            const cleanKey = recipientPubPem
-                .replace(/-----BEGIN.*?-----/g, '')
-                .replace(/-----END.*?-----/g, '')
-                .replace(/\s/g, '');
+            const recipientPK = fromBase64(recipientPubBase64);
+            const sender = new MlKem1024();
 
-            const binaryDer = Uint8Array.from(atob(cleanKey), c => c.charCodeAt(0));
-            const pubKey = await window.crypto.subtle.importKey("spki", binaryDer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+            // A. Encapsulate: Generates a shared secret (ss) and its encapsulation (c)
+            // This replaces RSA key exchange with Quantum-Safe Key Exchange
+            const [ciphertext, sharedSecret] = await sender.encap(recipientPK);
+
+            // B. Use the Quantum-Safe Shared Secret to encrypt the actual message (AES-GCM)
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
             const enc = new TextEncoder();
-            const encoded = enc.encode(text);
-            const encrypted = await window.crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, encoded);
-            return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+
+            // Import the Kyber shared secret as an AES key
+            const aesKey = await window.crypto.subtle.importKey(
+                "raw",
+                new Uint8Array(sharedSecret) as any,
+                { name: "AES-GCM" },
+                false,
+                ["encrypt"]
+            );
+
+            const encryptedMessage = await window.crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv },
+                aesKey,
+                enc.encode(text)
+            );
+
+            // C. Package everything: Kyber Ciphertext (Key) + AES Ciphertext (Data) + IV
+            const packageData = {
+                kem: toBase64(ciphertext), // The quantum key capsule
+                msg: toBase64(new Uint8Array(encryptedMessage)), // The message
+                iv: toBase64(iv)
+            };
+
+            return JSON.stringify(packageData);
+
         } catch (e) {
-            console.error("Encryption failed", e);
+            console.error("PQC Encryption failed", e);
             return null;
         }
     }
 
-    static async decrypt(encryptedBase64: string, myPrivPem: string) {
+    // 3. Quantum-Safe Decryption
+    static async decrypt(packageJson: string, myPrivBase64: string) {
         try {
-            const cleanKey = myPrivPem
-                .replace(/-----BEGIN.*?-----/g, '')
-                .replace(/-----END.*?-----/g, '')
-                .replace(/\s/g, '');
+            const pkg = JSON.parse(packageJson);
+            const mySK = fromBase64(myPrivBase64);
+            const recipient = new MlKem1024();
 
-            const binaryDer = Uint8Array.from(atob(cleanKey), c => c.charCodeAt(0));
-            const privKey = await window.crypto.subtle.importKey("pkcs8", binaryDer, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["decrypt"]);
-            const encryptedData = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
-            const decrypted = await window.crypto.subtle.decrypt({ name: "RSA-OAEP" }, privKey, encryptedData);
-            return new TextDecoder().decode(decrypted);
+            // A. Decapsulate: Recover the shared secret using private key
+            const sharedSecret = await recipient.decap(fromBase64(pkg.kem), mySK);
+
+            // B. Derive the AES key from the recovered secret
+            const aesKey = await window.crypto.subtle.importKey(
+                "raw",
+                new Uint8Array(sharedSecret) as any,
+                { name: "AES-GCM" },
+                false,
+                ["decrypt"]
+            );
+
+            // C. Decrypt the message
+            const decryptedBuffer = await window.crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: fromBase64(pkg.iv) },
+                aesKey,
+                fromBase64(pkg.msg)
+            );
+
+            return new TextDecoder().decode(decryptedBuffer);
         } catch (e) {
-            console.warn("Decryption failed", e);
-            return "🔒 Undecryptable";
+            console.warn("PQC Decryption failed", e);
+            return "🔒 Undecryptable (Quantum)";
         }
     }
+
+    // Symmetric Fallback (for local storage/profile encryption) - remains AES
     static async symEncrypt(data: string, key: CryptoKey): Promise<string> {
         const iv = window.crypto.getRandomValues(new Uint8Array(12));
         const enc = new TextEncoder();
@@ -56,35 +105,21 @@ export class CryptoService {
             key,
             enc.encode(data)
         );
-
-        // Combine IV + Encrypted Data
         const buffer = new Uint8Array(iv.length + encrypted.byteLength);
         buffer.set(iv);
         buffer.set(new Uint8Array(encrypted), iv.length);
-
-        let binary = '';
-        const len = buffer.byteLength;
-        for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(buffer[i]);
-        }
-        return btoa(binary);
+        return toBase64(buffer);
     }
 
     static async symDecrypt(encryptedBase64: string, key: CryptoKey): Promise<string> {
-        const binary = atob(encryptedBase64);
-        const data = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            data[i] = binary.charCodeAt(i);
-        }
-        const iv = data.slice(0, 12);
-        const ciphertext = data.slice(12);
-
+        const binary = fromBase64(encryptedBase64);
+        const iv = binary.slice(0, 12);
+        const ciphertext = binary.slice(12);
         const decrypted = await window.crypto.subtle.decrypt(
             { name: "AES-GCM", iv: iv },
             key,
             ciphertext
         );
-
         return new TextDecoder().decode(decrypted);
     }
 }

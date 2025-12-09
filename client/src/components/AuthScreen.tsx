@@ -7,28 +7,20 @@ import { collection, query, where, getDocs, doc, setDoc, serverTimestamp } from 
 import { signInAnonymously } from 'firebase/auth';
 
 interface AuthScreenProps {
-  onLogin: (user: any) => void;
+  onLogin: (user: any, profile: any) => void;
 }
 
-// True random System ID
+// Generate Unique System ID
 const generateSystemId = () => {
-  const array = new Uint32Array(3);
-  window.crypto.getRandomValues(array);
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const randomValues = new Uint32Array(6);
+  window.crypto.getRandomValues(randomValues);
   let result = '';
-  for (let i = 0; i < 3; i++) {
-    const val = array[i] % chars.length;
-    result += chars.charAt(val);
-    if (i < 2) result += '-';
-  }
-  let longResult = '';
-  const longArray = new Uint32Array(6);
-  window.crypto.getRandomValues(longArray);
   for (let i = 0; i < 6; i++) {
-    longResult += chars.charAt(longArray[i] % chars.length);
-    if (i % 2 !== 0 && i !== 5) longResult += '-';
+    result += chars.charAt(randomValues[i] % chars.length);
+    if (i % 2 !== 0 && i !== 5) result += '-';
   }
-  return longResult;
+  return result;
 };
 
 export function AuthScreen({ onLogin }: AuthScreenProps) {
@@ -79,7 +71,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
       setGeneratedKey(keys.priv);
       setGeneratedPhrase(mnemonic);
-
       localStorage.setItem(`temp_pub_${regUsername}`, keys.pub);
 
       setStep('keys_generated');
@@ -88,10 +79,6 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handlePhraseSaved = () => {
-    setStep('profile_setup');
   };
 
   const handleCompleteRegistration = async () => {
@@ -111,14 +98,12 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       const recoveryKey = await RecoveryService.deriveKeyFromMnemonic(generatedPhrase);
       const encryptedPrivKey = await CryptoService.symEncrypt(generatedKey, recoveryKey);
 
-      const systemId = generateSystemId();
-
       const profileData = {
         uid: user.uid,
         username: regUsername.toLowerCase(),
         displayName: displayName.trim(),
         avatarColor,
-        systemId,
+        systemId: generateSystemId(),
         publicKey: pubKey,
         encryptedPrivateKey: encryptedPrivKey,
         createdAt: serverTimestamp()
@@ -130,7 +115,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       localStorage.setItem('qrypt_username', regUsername);
       localStorage.setItem('qrypt_private_key', generatedKey);
 
-      onLogin(user);
+      onLogin(user, profileData); // Pass profile directly!
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -140,19 +125,12 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
   const handleLogin = async () => {
     setError(null);
-    if (!loginUsername.startsWith('@')) {
-      setError("Username must start with @");
-      return;
-    }
-    if (!loginKey) {
-      setError(loginTab === 'phrase' ? "Enter recovery phrase" : "Enter private key");
-      return;
-    }
+    if (!loginUsername.startsWith('@')) return setError("Username must start with @");
+    if (!loginKey) return setError("Enter private key or phrase");
 
     setLoading(true);
     try {
       const user = await initAuth();
-
       const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'profiles'), where('username', '==', loginUsername.toLowerCase()));
       const snap = await getDocs(q);
 
@@ -162,28 +140,26 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       let privKeyToUse = '';
 
       if (loginTab === 'phrase') {
-        if (!profileData.encryptedPrivateKey) throw new Error("This account has no recovery setup.");
+        if (!profileData.encryptedPrivateKey) throw new Error("No recovery setup found.");
         const recoveryKey = await RecoveryService.deriveKeyFromMnemonic(loginKey);
         try {
           privKeyToUse = await CryptoService.symDecrypt(profileData.encryptedPrivateKey, recoveryKey);
-        } catch (e) {
-          throw new Error("Invalid Recovery Phrase.");
-        }
+        } catch { throw new Error("Invalid Recovery Phrase."); }
       } else {
         privKeyToUse = loginKey.trim();
       }
 
+      // Verify Key
       const testMsg = "QREF_VERIFY";
       const encrypted = await CryptoService.encrypt(testMsg, profileData.publicKey);
       if (!encrypted) throw new Error("Public Key Error");
-
       const decrypted = await CryptoService.decrypt(encrypted, privKeyToUse);
-      if (decrypted !== testMsg) throw new Error("Key mismatch! This private key doesn't belong to this user.");
+      if (decrypted !== testMsg) throw new Error("Key mismatch!");
 
       localStorage.setItem('qrypt_username', loginUsername);
       localStorage.setItem('qrypt_private_key', privKeyToUse);
 
-      onLogin(user);
+      onLogin(user, profileData); // Pass profile directly!
 
     } catch (e: any) {
       setError(e.message);
@@ -192,19 +168,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(generatedPhrase);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const colors = [
-    'from-cyan-500 to-blue-600',
-    'from-emerald-500 to-green-600',
-    'from-purple-500 to-indigo-600',
-    'from-rose-500 to-red-600',
-    'from-amber-500 to-orange-600',
-  ];
+  const colors = ['from-cyan-500 to-blue-600', 'from-emerald-500 to-green-600', 'from-purple-500 to-indigo-600', 'from-rose-500 to-red-600', 'from-amber-500 to-orange-600'];
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -218,178 +182,87 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         </div>
 
         <div className="bg-slate-900/80 backdrop-blur-md rounded-2xl p-6 border border-slate-800 shadow-2xl">
-
           {step === 'init' && (
             <div className="flex gap-2 mb-6 bg-slate-950/50 p-1 rounded-xl">
-              <button onClick={() => setMode('register')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'register' ? 'bg-slate-800 text-white shadow' : 'text-gray-400 hover:text-gray-200'}`}>New Identity</button>
-              <button onClick={() => setMode('login')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'login' ? 'bg-slate-800 text-white shadow' : 'text-gray-400 hover:text-gray-200'}`}>Existing User</button>
+              <button onClick={() => setMode('register')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'register' ? 'bg-slate-800 text-white' : 'text-gray-400'}`}>New Identity</button>
+              <button onClick={() => setMode('login')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'login' ? 'bg-slate-800 text-white' : 'text-gray-400'}`}>Existing User</button>
             </div>
           )}
 
           {error && (
             <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              {error}
+              <AlertTriangle className="w-4 h-4 shrink-0" />{error}
             </div>
           )}
 
           {mode === 'login' && (
-            <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
+            <div className="space-y-4 animate-in fade-in">
               <div>
-                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold tracking-wider">Identity</label>
+                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold">Identity</label>
                 <div className="relative">
                   <User className="absolute left-3 top-3 w-5 h-5 text-gray-500" />
-                  <input
-                    value={loginUsername}
-                    onChange={(e) => setLoginUsername(e.target.value)}
-                    placeholder="@username"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white focus:border-cyan-500 focus:outline-none transition"
-                  />
+                  <input value={loginUsername} onChange={(e) => setLoginUsername(e.target.value)} placeholder="@username" className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white focus:border-cyan-500 outline-none" />
                 </div>
               </div>
-
               <div className="flex gap-2 text-xs">
                 <button onClick={() => setLoginTab('phrase')} className={`px-3 py-1 rounded-full border transition ${loginTab === 'phrase' ? 'border-cyan-500 text-cyan-400 bg-cyan-500/10' : 'border-slate-800 text-gray-500'}`}>Recovery Phrase</button>
-                <button onClick={() => setLoginTab('key')} className={`px-3 py-1 rounded-full border transition ${loginTab === 'key' ? 'border-cyan-500 text-cyan-400 bg-cyan-500/10' : 'border-slate-800 text-gray-500'}`}>Raw Private Key</button>
+                <button onClick={() => setLoginTab('key')} className={`px-3 py-1 rounded-full border transition ${loginTab === 'key' ? 'border-cyan-500 text-cyan-400 bg-cyan-500/10' : 'border-slate-800 text-gray-500'}`}>Raw Key</button>
               </div>
-
-              {loginTab === 'phrase' ? (
-                <textarea
-                  value={loginKey}
-                  onChange={(e) => setLoginKey(e.target.value)}
-                  placeholder="Enter your 12-word recovery phrase..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-cyan-500 focus:outline-none transition h-24 resize-none"
-                />
-              ) : (
-                <textarea
-                  value={loginKey}
-                  onChange={(e) => setLoginKey(e.target.value)}
-                  placeholder="-----BEGIN PRIVATE KEY-----"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-[10px] font-mono focus:border-cyan-500 focus:outline-none transition h-24 resize-none"
-                />
-              )}
-
-              <button
-                onClick={handleLogin}
-                disabled={loading}
-                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium hover:opacity-90 transition disabled:opacity-50 flex justify-center gap-2"
-              >
-                {loading ? <Loader2 className="animate-spin" /> : 'Decrypt & Login'}
-              </button>
-
+              <textarea value={loginKey} onChange={(e) => setLoginKey(e.target.value)} placeholder={loginTab === 'phrase' ? "Enter recovery phrase..." : "Begin Private Key..."} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-xs h-24 font-mono focus:border-cyan-500 outline-none resize-none" />
+              <button onClick={handleLogin} disabled={loading} className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium flex justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="animate-spin" /> : 'Login'}</button>
               <div className="text-center mt-4">
-                <button onClick={() => localStorage.clear()} className="text-[10px] text-gray-600 hover:text-red-400 flex items-center justify-center gap-1 mx-auto">
-                  <RefreshCw size={10} /> Clear Local Cache
-                </button>
+                <button onClick={() => localStorage.clear()} className="text-[10px] text-gray-600 hover:text-red-400 flex items-center justify-center gap-1 mx-auto"><RefreshCw size={10} /> Clear Cache</button>
               </div>
             </div>
           )}
 
           {mode === 'register' && step === 'init' && (
-            <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
+            <div className="space-y-4 animate-in fade-in">
               <div>
-                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold tracking-wider">Choose Username</label>
+                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold">Choose Username</label>
                 <div className="relative">
                   <User className="absolute left-3 top-3 w-5 h-5 text-gray-500" />
-                  <input
-                    value={regUsername}
-                    onChange={(e) => setRegUsername(e.target.value)}
-                    placeholder="@username"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white focus:border-cyan-500 focus:outline-none transition"
-                  />
+                  <input value={regUsername} onChange={(e) => setRegUsername(e.target.value)} placeholder="@username" className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white focus:border-cyan-500 outline-none" />
                 </div>
-                <p className="text-[10px] text-gray-500 mt-2">A unique 2048-bit RSA key pair will be generated for this identity.</p>
               </div>
-
-              <button
-                onClick={handleGenerateIdentity}
-                disabled={loading || !regUsername}
-                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium hover:opacity-90 transition disabled:opacity-50 flex justify-center gap-2"
-              >
-                {loading ? <Loader2 className="animate-spin" /> : 'Generate Identity'}
-              </button>
+              <button onClick={handleGenerateIdentity} disabled={loading || !regUsername} className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium flex justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="animate-spin" /> : 'Generate Identity'}</button>
             </div>
           )}
 
           {mode === 'register' && step === 'keys_generated' && (
-            <div className="space-y-4 animate-in fade-in zoom-in-95">
+            <div className="space-y-4 animate-in fade-in">
               <div className="text-center">
-                <div className="w-12 h-12 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-2">
-                  <ShieldCheck className="w-6 h-6 text-green-500" />
-                </div>
-                <h3 className="text-white font-bold">Identity Generated</h3>
-                <p className="text-xs text-gray-400">Save this phrase. It is the ONLY way to recover your account.</p>
+                <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                <h3 className="text-white font-bold">Save this Phrase</h3>
               </div>
-
               <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 relative group">
-                <p className="font-mono text-lg text-cyan-400 text-center leading-relaxed">{generatedPhrase}</p>
-                <button
-                  onClick={handleCopy}
-                  className="absolute top-2 right-2 p-2 bg-slate-800 rounded-lg text-gray-300 hover:text-white transition opacity-0 group-hover:opacity-100"
-                >
-                  {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-                </button>
+                <p className="font-mono text-lg text-cyan-400 text-center">{generatedPhrase}</p>
+                <button onClick={() => { navigator.clipboard.writeText(generatedPhrase); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="absolute top-2 right-2 p-2 bg-slate-800 rounded-lg text-gray-300 hover:text-white opacity-0 group-hover:opacity-100 transition">{copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}</button>
               </div>
-
-              <div className="bg-slate-800/50 p-3 rounded-lg flex gap-3 items-start">
-                <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" />
-                <p className="text-[10px] text-gray-300 leading-tight">
-                  We do not store your private key. If you lose this phrase, your account and messages are lost forever.
-                </p>
-              </div>
-
-              <button
-                onClick={handlePhraseSaved}
-                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition flex justify-center items-center gap-2"
-              >
-                I Have Saved It <ChevronRight size={16} />
-              </button>
+              <button onClick={() => setStep('profile_setup')} className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium flex justify-center items-center gap-2">I Have Saved It <ChevronRight size={16} /></button>
             </div>
           )}
 
           {mode === 'register' && step === 'profile_setup' && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+            <div className="space-y-6 animate-in fade-in">
               <div className="text-center">
                 <h3 className="text-white font-bold text-xl">Setup Profile</h3>
-                <p className="text-xs text-gray-400">Customize how others see you</p>
               </div>
-
               <div className="flex flex-col items-center gap-4">
                 <div className={`w-24 h-24 rounded-full bg-gradient-to-br ${avatarColor} flex items-center justify-center shadow-2xl`}>
                   <span className="text-4xl text-white font-bold">{displayName ? displayName[0].toUpperCase() : '?'}</span>
                 </div>
-
                 <div className="flex gap-2">
-                  {colors.map(c => (
-                    <button
-                      key={c}
-                      onClick={() => setAvatarColor(c)}
-                      className={`w-6 h-6 rounded-full bg-gradient-to-br ${c} ${avatarColor === c ? 'ring-2 ring-white scale-110' : 'opacity-50 hover:opacity-100'} transition`}
-                    />
-                  ))}
+                  {colors.map(c => <button key={c} onClick={() => setAvatarColor(c)} className={`w-6 h-6 rounded-full bg-gradient-to-br ${c} ${avatarColor === c ? 'ring-2 ring-white scale-110' : 'opacity-50'} transition`} />)}
                 </div>
               </div>
-
               <div>
-                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold tracking-wider">Display Name</label>
-                <input
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="e.g. Alice"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-cyan-500 focus:outline-none transition"
-                />
+                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold">Display Name</label>
+                <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="e.g. Alice" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-cyan-500 outline-none" />
               </div>
-
-              <button
-                onClick={handleCompleteRegistration}
-                disabled={loading || !displayName}
-                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium hover:opacity-90 transition disabled:opacity-50 flex justify-center gap-2"
-              >
-                {loading ? <Loader2 className="animate-spin" /> : 'Complete Setup'}
-              </button>
+              <button onClick={handleCompleteRegistration} disabled={loading || !displayName} className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium flex justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="animate-spin" /> : 'Complete Setup'}</button>
             </div>
           )}
-
         </div>
       </div>
     </div>
