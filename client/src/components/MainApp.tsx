@@ -30,37 +30,33 @@ export function MainApp({ currentUser, userProfile, onLogout }: MainAppProps) {
       <div className="hidden md:flex md:flex-col md:w-20 bg-slate-900 border-r border-slate-800">
         <div className="flex-1 flex flex-col items-center py-6 space-y-6">
           <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-cyan-500/20">
-            <span className="text-white">Q</span>
+            <span className="text-white font-bold text-xl">Q</span>
           </div>
 
           <button
             onClick={() => setActiveTab('chats')}
-            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${activeTab === 'chats' ? 'bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20' : 'text-gray-400 hover:bg-slate-800 hover:text-gray-300'
-              }`}
+            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${activeTab === 'chats' ? 'bg-slate-800 text-cyan-400' : 'text-gray-400 hover:bg-slate-800 hover:text-gray-300'}`}
           >
             <MessageSquare className="w-6 h-6" />
           </button>
 
           <button
             onClick={() => setActiveTab('friends')}
-            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${activeTab === 'friends' ? 'bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20' : 'text-gray-400 hover:bg-slate-800 hover:text-gray-300'
-              }`}
+            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${activeTab === 'friends' ? 'bg-slate-800 text-cyan-400' : 'text-gray-400 hover:bg-slate-800 hover:text-gray-300'}`}
           >
             <Users className="w-6 h-6" />
           </button>
 
           <button
             onClick={() => setActiveTab('tools')}
-            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${activeTab === 'tools' ? 'bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20' : 'text-gray-400 hover:bg-slate-800 hover:text-gray-300'
-              }`}
+            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${activeTab === 'tools' ? 'bg-slate-800 text-cyan-400' : 'text-gray-400 hover:bg-slate-800 hover:text-gray-300'}`}
           >
             <ShieldCheck className="w-6 h-6" />
           </button>
 
           <button
             onClick={() => setActiveTab('settings')}
-            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${activeTab === 'settings' ? 'bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20' : 'text-gray-400 hover:bg-slate-800 hover:text-gray-300'
-              }`}
+            className={`w-12 h-12 rounded-xl flex items-center justify-center transition ${activeTab === 'settings' ? 'bg-slate-800 text-cyan-400' : 'text-gray-400 hover:bg-slate-800 hover:text-gray-300'}`}
           >
             <Settings className="w-6 h-6" />
           </button>
@@ -74,7 +70,9 @@ export function MainApp({ currentUser, userProfile, onLogout }: MainAppProps) {
           {activeTab === 'chats' && <ChatList onChatSelect={handleChatSelect} currentUser={currentUser} username={userProfile?.username || ''} />}
           {activeTab === 'friends' && <FriendsTab currentUser={currentUser} onChatSelect={handleChatSelect} />}
           {activeTab === 'tools' && <ToolsTab currentUser={currentUser} />}
-          {activeTab === 'settings' && <SettingsScreen username={userProfile?.username || ''} onLogout={onLogout} />}
+
+          {/* UPDATED: Pass the full userProfile object instead of just username */}
+          {activeTab === 'settings' && <SettingsScreen profile={userProfile} onLogout={onLogout} />}
         </div>
 
         {/* Chat Interface */}
@@ -84,7 +82,9 @@ export function MainApp({ currentUser, userProfile, onLogout }: MainAppProps) {
           ) : (
             <div className="flex-1 flex items-center justify-center bg-slate-950">
               <div className="text-center text-gray-500">
-                <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                <div className="w-20 h-20 bg-slate-900 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <MessageSquare className="w-8 h-8 opacity-50" />
+                </div>
                 <p>Select a chat to start messaging</p>
               </div>
             </div>
@@ -95,48 +95,32 @@ export function MainApp({ currentUser, userProfile, onLogout }: MainAppProps) {
       {/* Mobile Bottom Navigation */}
       <div className="md:hidden flex items-center justify-around bg-slate-900 border-t border-slate-800 py-3 safe-area-bottom">
         <button
-          onClick={() => {
-            setActiveTab('chats');
-            setSelectedChatId(null);
-          }}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === 'chats' ? 'text-cyan-500' : 'text-gray-400'
-            }`}
+          onClick={() => { setActiveTab('chats'); setSelectedChatId(null); }}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === 'chats' ? 'text-cyan-500' : 'text-gray-400'}`}
         >
           <MessageSquare className="w-6 h-6" />
           <span className="text-xs">Chats</span>
         </button>
 
         <button
-          onClick={() => {
-            setActiveTab('friends');
-            setSelectedChatId(null);
-          }}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === 'friends' ? 'text-cyan-500' : 'text-gray-400'
-            }`}
+          onClick={() => { setActiveTab('friends'); setSelectedChatId(null); }}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === 'friends' ? 'text-cyan-500' : 'text-gray-400'}`}
         >
           <Users className="w-6 h-6" />
           <span className="text-xs">Friends</span>
         </button>
 
         <button
-          onClick={() => {
-            setActiveTab('tools');
-            setSelectedChatId(null);
-          }}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === 'tools' ? 'text-cyan-500' : 'text-gray-400'
-            }`}
+          onClick={() => { setActiveTab('tools'); setSelectedChatId(null); }}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === 'tools' ? 'text-cyan-500' : 'text-gray-400'}`}
         >
           <ShieldCheck className="w-6 h-6" />
           <span className="text-xs">Tools</span>
         </button>
 
         <button
-          onClick={() => {
-            setActiveTab('settings');
-            setSelectedChatId(null);
-          }}
-          className={`flex flex-col items-center gap-1 transition ${activeTab === 'settings' ? 'text-cyan-500' : 'text-gray-400'
-            }`}
+          onClick={() => { setActiveTab('settings'); setSelectedChatId(null); }}
+          className={`flex flex-col items-center gap-1 transition ${activeTab === 'settings' ? 'text-cyan-500' : 'text-gray-400'}`}
         >
           <Settings className="w-6 h-6" />
           <span className="text-xs">Settings</span>

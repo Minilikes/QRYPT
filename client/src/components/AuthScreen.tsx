@@ -1,38 +1,62 @@
-import { useState } from 'react';
-import { KeyRound, User, Copy, Check, AlertTriangle, Loader2, ShieldCheck, Lock } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { KeyRound, User, Copy, Check, AlertTriangle, Loader2, ShieldCheck, Lock, ChevronRight, RefreshCw } from 'lucide-react';
 import { CryptoService } from '../lib/crypto';
 import { RecoveryService } from '../lib/recovery';
 import { db, auth, APP_ID } from '../lib/firebase';
-import { collection, query, where, getDocs, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 
 interface AuthScreenProps {
   onLogin: (user: any) => void;
 }
 
+// True random System ID
+const generateSystemId = () => {
+  const array = new Uint32Array(3);
+  window.crypto.getRandomValues(array);
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let result = '';
+  for (let i = 0; i < 3; i++) {
+    // Map random number to char
+    const val = array[i] % chars.length;
+    result += chars.charAt(val);
+    if (i < 2) result += '-';
+  }
+  // Format: A-B-C (simple 3 char) or expand logic as needed. 
+  // Let's do the original format A1-B2-C3
+  let longResult = '';
+  const longArray = new Uint32Array(6);
+  window.crypto.getRandomValues(longArray);
+  for (let i = 0; i < 6; i++) {
+    longResult += chars.charAt(longArray[i] % chars.length);
+    if (i % 2 !== 0 && i !== 5) longResult += '-';
+  }
+  return longResult;
+};
+
 export function AuthScreen({ onLogin }: AuthScreenProps) {
-  const [isNewUser, setIsNewUser] = useState(true);
-  const [useRecoveryPhrase, setUseRecoveryPhrase] = useState(false);
-  const [username, setUsername] = useState('');
-  const [privateKey, setPrivateKey] = useState('');
+  const [mode, setMode] = useState<'login' | 'register'>('register');
+  const [step, setStep] = useState<'init' | 'keys_generated' | 'profile_setup'>('init');
+
+  // Login State
+  const [loginTab, setLoginTab] = useState<'phrase' | 'key'>('phrase');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginKey, setLoginKey] = useState(''); // Phrase or PEM
+
+  // Registration State
+  const [regUsername, setRegUsername] = useState('');
   const [generatedKey, setGeneratedKey] = useState('');
-  const [recoveryPhrase, setRecoveryPhrase] = useState('');
-  const [generatedRecoveryPhrase, setGeneratedRecoveryPhrase] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [showKeyModal, setShowKeyModal] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [generatedPhrase, setGeneratedPhrase] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [avatarColor, setAvatarColor] = useState('from-cyan-500 to-blue-600');
+
+  // UI State
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  const generateSystemId = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let result = '';
-    for (let i = 0; i < 6; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-      if (i % 2 !== 0 && i !== 5) result += '-';
-    }
-    return result;
-  };
+  // Clear error when switching modes
+  useEffect(() => { setError(null); }, [mode, loginTab]);
 
   const initAuth = async () => {
     if (!auth.currentUser) {
@@ -41,398 +65,364 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     return auth.currentUser;
   };
 
-  const generateKeys = async () => {
+  // --- REGISTRATION FLOW ---
+
+  const handleGenerateIdentity = async () => {
     setError(null);
-    if (!username.startsWith('@')) {
-      setError('Username must start with @');
-      return;
-    }
-    if (username.length < 4) {
-      setError('Username too short');
+    if (!regUsername.startsWith('@') || regUsername.length < 4) {
+      setError('Username must start with @ and be at least 3 characters.');
       return;
     }
 
-    setIsGenerating(true);
-
+    setLoading(true);
     try {
-      // Check uniqueness
-      const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'profiles'), where('username', '==', username.toLowerCase()));
+      // 1. Check Uniqueness
+      const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'profiles'), where('username', '==', regUsername.toLowerCase()));
       const snap = await getDocs(q);
-      if (!snap.empty) {
-        throw new Error("Username already taken.");
-      }
+      if (!snap.empty) throw new Error("Username already taken.");
 
+      // 2. Generate Keys
       const keys = await CryptoService.generateKeys();
       const mnemonic = RecoveryService.generateMnemonic();
 
       setGeneratedKey(keys.priv);
-      setGeneratedRecoveryPhrase(mnemonic);
+      setGeneratedPhrase(mnemonic);
 
-      // Temporarily store public key to save later
-      localStorage.setItem(`temp_pub_${username}`, keys.pub);
+      // Store Public Key temporarily in memory (or local state)
+      // We don't save to DB yet.
+      localStorage.setItem(`temp_pub_${regUsername}`, keys.pub);
 
-      setShowKeyModal(true);
+      setStep('keys_generated');
     } catch (e: any) {
       setError(e.message);
     } finally {
-      setIsGenerating(false);
+      setLoading(false);
     }
   };
 
-  const handleRegisterComplete = async () => {
+  const handlePhraseSaved = () => {
+    setStep('profile_setup');
+  };
+
+  const handleCompleteRegistration = async () => {
+    if (!displayName.trim()) {
+      setError("Please set a display name.");
+      return;
+    }
     setLoading(true);
+
     try {
       const user = await initAuth();
       if (!user) throw new Error("Auth failed");
 
-      const pubKey = localStorage.getItem(`temp_pub_${username}`);
-      if (!pubKey) throw new Error("Key lost. Please regenerate.");
+      const pubKey = localStorage.getItem(`temp_pub_${regUsername}`);
+      if (!pubKey) throw new Error("Key session lost. Please restart.");
 
-      // Encrypt Private Key with Mnemonic for Recovery
-      const recoveryKey = await RecoveryService.deriveKeyFromMnemonic(generatedRecoveryPhrase);
+      // Encrypt Private Key for Recovery
+      const recoveryKey = await RecoveryService.deriveKeyFromMnemonic(generatedPhrase);
       const encryptedPrivKey = await CryptoService.symEncrypt(generatedKey, recoveryKey);
 
       const systemId = generateSystemId();
+
       const profileData = {
         uid: user.uid,
-        username: username.toLowerCase(),
+        username: regUsername.toLowerCase(),
+        displayName: displayName.trim(),
+        avatarColor,
         systemId,
         publicKey: pubKey,
-        encryptedPrivateKey: encryptedPrivKey, // Storing encrypted backup!
+        encryptedPrivateKey: encryptedPrivKey,
         createdAt: serverTimestamp()
       };
 
-      // Save Private Profile
+      // Atomic-like Save
+      // 1. Private Profile
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'settings', 'profile'), profileData);
-      // Save Public Profile
+      // 2. Public Profile
       await setDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'profiles', user.uid), profileData);
 
-      // Save locally
-      localStorage.setItem('qrypt_username', username);
-      localStorage.setItem('qrypt_private_key', generatedKey);
+      // Local Session
+      localStorage.setItem('qrypt_username', regUsername);
+      localStorage.setItem('qrypt_private_key', generatedKey); // Raw key for current session
 
       onLogin(user);
     } catch (e: any) {
       setError(e.message);
     } finally {
       setLoading(false);
-      setShowKeyModal(false);
     }
   };
 
-  const handleExistingLogin = async () => {
-    setError(null);
-    if (!username.startsWith('@')) {
-      setError('Username must start with @');
-      return;
-    }
+  // --- LOGIN FLOW ---
 
-    // If using Recovery Phrase mode
-    if (useRecoveryPhrase && !recoveryPhrase) {
-      setError('Please enter your recovery phrase');
+  const handleLogin = async () => {
+    setError(null);
+    if (!loginUsername.startsWith('@')) {
+      setError("Username must start with @");
       return;
     }
-    // If using Raw Key mode
-    if (!useRecoveryPhrase && !privateKey) {
-      setError('Please enter your private key');
+    if (!loginKey) {
+      setError(loginTab === 'phrase' ? "Enter recovery phrase" : "Enter private key");
       return;
     }
 
     setLoading(true);
     try {
-      console.log("Starting Login Flow...");
       const user = await initAuth();
-      console.log("Auth User OK, UID:", user?.uid);
 
-      // 1. Fetch Profile
-      console.log("Fetching profile for:", username.toLowerCase());
-      const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'profiles'), where('username', '==', username.toLowerCase()));
+      // 1. Fetch Profile Publicly
+      const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'profiles'), where('username', '==', loginUsername.toLowerCase()));
       const snap = await getDocs(q);
 
-      if (snap.empty) {
-        console.error("User profile NOT found in Firestore");
-        throw new Error("User not found.");
-      }
+      if (snap.empty) throw new Error("User not found.");
 
       const profileData = snap.docs[0].data();
-      console.log("Profile Found. Public Key length:", profileData.publicKey?.length);
-
       let privKeyToUse = '';
 
-      if (useRecoveryPhrase) {
-        console.log("Using Recovery Phrase flow");
-        // Recover Private Key
-        if (!profileData.encryptedPrivateKey) {
-          throw new Error("No recovery phrase found for this account. Use raw key.");
-        }
-        const recoveryKey = await RecoveryService.deriveKeyFromMnemonic(recoveryPhrase);
+      if (loginTab === 'phrase') {
+        // Recovery Mode
+        if (!profileData.encryptedPrivateKey) throw new Error("This account has no recovery setup.");
+        const recoveryKey = await RecoveryService.deriveKeyFromMnemonic(loginKey);
         try {
           privKeyToUse = await CryptoService.symDecrypt(profileData.encryptedPrivateKey, recoveryKey);
-          console.log("Key recovered successfully");
         } catch (e) {
-          console.error("Recovery decryption failed", e);
-          throw new Error("Invalid Recovery Phrase");
+          throw new Error("Invalid Recovery Phrase.");
         }
       } else {
-        console.log("Using Raw Private Key flow");
-        privKeyToUse = privateKey;
+        // Raw Key Mode
+        privKeyToUse = loginKey.trim();
       }
 
-      // 2. Verify Key
-      console.log("Verifying Key Pair...");
+      // 2. Verify Key Pair
       const testMsg = "QREF_VERIFY";
+      const encrypted = await CryptoService.encrypt(testMsg, profileData.publicKey);
+      if (!encrypted) throw new Error("Public Key Error");
 
-      // Encrypt with stored PUBLIC key
-      let encrypted = null;
-      try {
-        encrypted = await CryptoService.encrypt(testMsg, profileData.publicKey);
-      } catch (e) {
-        console.error("Encryption with stored PUBLIC key failed.", e);
-        throw new Error("Stored Public Key is invalid or corrupt.");
-      }
+      const decrypted = await CryptoService.decrypt(encrypted, privKeyToUse);
+      if (decrypted !== testMsg) throw new Error("Key mismatch! This private key doesn't belong to this user.");
 
-      if (!encrypted) {
-        throw new Error("Encryption returned null");
-      }
-
-      // Decrypt with provided PRIVATE key
-      let decrypted = null;
-      try {
-        decrypted = await CryptoService.decrypt(encrypted, privKeyToUse);
-      } catch (e) {
-        console.error("Decryption threw error", e);
-      }
-
-      console.log("Decrypted result:", decrypted === testMsg ? "MATCH" : "MISMATCH", "Value:", decrypted);
-
-      if (decrypted !== testMsg) throw new Error("Private Key does not match the account's Public Key");
-
-      // 3. Save
-      localStorage.setItem('qrypt_username', username);
+      // 3. Success
+      localStorage.setItem('qrypt_username', loginUsername);
       localStorage.setItem('qrypt_private_key', privKeyToUse);
 
-      console.log("Login Successful");
       onLogin(user);
 
     } catch (e: any) {
-      console.error("Login Error:", e);
       setError(e.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCopyPhrase = () => {
-    navigator.clipboard.writeText(generatedRecoveryPhrase);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(generatedPhrase);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // --- RENDER HELPERS ---
+
+  const colors = [
+    'from-cyan-500 to-blue-600',
+    'from-emerald-500 to-green-600',
+    'from-purple-500 to-indigo-600',
+    'from-rose-500 to-red-600',
+    'from-amber-500 to-orange-600',
+  ];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo */}
+        {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-2xl mb-4 shadow-lg shadow-cyan-500/20">
             <KeyRound className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-4xl text-white mb-2">QRYPT</h1>
-          <p className="text-gray-400">End-to-End Encrypted Messaging</p>
+          <h1 className="text-3xl text-white font-bold tracking-tight">QRYPT</h1>
+          <p className="text-gray-400">Quantum-Resistant Secure Chat</p>
         </div>
 
-        {/* Auth Card */}
-        <div className="bg-slate-900/80 backdrop-blur-xl rounded-2xl p-6 border border-slate-800 shadow-2xl">
-          {/* Toggle */}
-          <div className="flex gap-2 mb-6 bg-slate-950/50 p-1 rounded-xl">
-            <button
-              onClick={() => { setIsNewUser(true); setError(null); }}
-              className={`flex-1 py-2.5 rounded-lg transition ${isNewUser ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20' : 'text-gray-400 hover:text-gray-300'
-                }`}
-            >
-              New Identity
-            </button>
-            <button
-              onClick={() => { setIsNewUser(false); setError(null); }}
-              className={`flex-1 py-2.5 rounded-lg transition ${!isNewUser ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20' : 'text-gray-400 hover:text-gray-300'
-                }`}
-            >
-              Existing User
-            </button>
-          </div>
+        <div className="bg-slate-900/80 backdrop-blur-md rounded-2xl p-6 border border-slate-800 shadow-2xl">
 
-          {/* Debug/Rescue Tool */}
-          <div className="mb-4 flex justify-end">
-            <button
-              onClick={async () => {
-                if (!confirm("Force delete account '@mini'? This cannot be undone.")) return;
-                try {
-                  const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'profiles'), where('username', '==', '@mini'));
-                  const snap = await getDocs(q);
-                  if (snap.empty) { alert("User @mini not found."); return; }
-                  const uid = snap.docs[0].id;
-                  await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'profiles', uid));
-                  await deleteDoc(doc(db, 'artifacts', APP_ID, 'users', uid, 'settings', 'profile'));
-                  alert("Deleted @mini. You can now register it again.");
-                } catch (e: any) {
-                  alert("Error: " + e.message);
-                }
-              }}
-              className="text-[10px] text-red-500 hover:text-red-400 underline"
-            >
-              Reset @mini
-            </button>
-          </div>
-
-          {isNewUser ? (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-gray-400 mb-2 text-sm">Username</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="@username"
-                    className="w-full bg-slate-950/50 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition"
-                  />
-                </div>
-              </div>
-
-              <button
-                onClick={generateKeys}
-                disabled={isGenerating || !username}
-                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl hover:from-cyan-600 hover:to-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Generating Keys...
-                  </>
-                ) : (
-                  <>
-                    <KeyRound className="w-5 h-5" />
-                    Generate Identity
-                  </>
-                )}
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-gray-400 mb-2 text-sm">Username</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="@username"
-                    className="w-full bg-slate-950/50 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setUseRecoveryPhrase(false)}
-                  className={`text-xs px-3 py-1 rounded-lg border ${!useRecoveryPhrase ? 'bg-cyan-500/10 border-cyan-500 text-cyan-400' : 'border-transparent text-gray-500'}`}
-                >
-                  Use Private Key
-                </button>
-                <button
-                  onClick={() => setUseRecoveryPhrase(true)}
-                  className={`text-xs px-3 py-1 rounded-lg border ${useRecoveryPhrase ? 'bg-cyan-500/10 border-cyan-500 text-cyan-400' : 'border-transparent text-gray-500'}`}
-                >
-                  Use Recovery Phrase
-                </button>
-              </div>
-
-              {useRecoveryPhrase ? (
-                <div>
-                  <label className="block text-gray-400 mb-2 text-sm">Recovery Phrase (12 Words)</label>
-                  <textarea
-                    value={recoveryPhrase}
-                    onChange={(e) => setRecoveryPhrase(e.target.value)}
-                    placeholder="abandon ability able..."
-                    rows={3}
-                    className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 font-mono text-sm transition leading-tight"
-                  />
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-gray-400 mb-2 text-sm">Private Key (PEM)</label>
-                  <textarea
-                    value={privateKey}
-                    onChange={(e) => setPrivateKey(e.target.value)}
-                    placeholder="Paste your private key here..."
-                    rows={6}
-                    className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 font-mono text-[10px] transition leading-tight"
-                  />
-                </div>
-              )}
-
-              <button
-                onClick={handleExistingLogin}
-                disabled={loading}
-                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl hover:from-cyan-600 hover:to-blue-700 transition shadow-lg shadow-cyan-500/20 flex justify-center items-center gap-2"
-              >
-                {loading ? <Loader2 className="animate-spin" /> : 'Login'}
-              </button>
+          {/* Mode Switch (Only visible in init) */}
+          {step === 'init' && (
+            <div className="flex gap-2 mb-6 bg-slate-950/50 p-1 rounded-xl">
+              <button onClick={() => setMode('register')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'register' ? 'bg-slate-800 text-white shadow' : 'text-gray-400 hover:text-gray-200'}`}>New Identity</button>
+              <button onClick={() => setMode('login')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'login' ? 'bg-slate-800 text-white shadow' : 'text-gray-400 hover:text-gray-200'}`}>Existing User</button>
             </div>
           )}
 
+          {/* ERROR BOX */}
           {error && (
-            <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs text-center flex items-center justify-center gap-2">
-              <AlertTriangle size={14} />
+            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
               {error}
             </div>
           )}
-        </div>
-      </div>
 
-      {/* Key Modal */}
-      {showKeyModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 rounded-2xl p-6 max-w-lg w-full border border-slate-800 shadow-2xl">
-            <div className="text-center mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3 shadow-lg shadow-green-500/20">
-                <ShieldCheck className="w-6 h-6 text-white" />
+          {/* --- VIEW: LOGIN --- */}
+          {mode === 'login' && (
+            <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold tracking-wider">Identity</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-3 w-5 h-5 text-gray-500" />
+                  <input
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                    placeholder="@username"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white focus:border-cyan-500 focus:outline-none transition"
+                  />
+                </div>
               </div>
-              <h3 className="text-white text-xl mb-2">Secure Identity Created</h3>
-              <p className="text-gray-400 text-sm">
-                Save your <strong>Recovery Phrase</strong>. It is the only way to recover your account if you lose your device.
-              </p>
-            </div>
 
-            <div className="bg-slate-950/50 rounded-xl p-4 mb-4 border border-slate-800 relative group">
-              <p className="text-cyan-400 text-xs uppercase font-bold mb-2">Recovery Phrase</p>
-              <p className="text-white font-mono text-lg leading-relaxed">{generatedRecoveryPhrase}</p>
-              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition">
-                <button onClick={handleCopyPhrase} className="p-2 bg-slate-800 rounded-lg text-white hover:bg-slate-700 flex items-center gap-1">
-                  {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+              <div className="flex gap-2 text-xs">
+                <button onClick={() => setLoginTab('phrase')} className={`px-3 py-1 rounded-full border transition ${loginTab === 'phrase' ? 'border-cyan-500 text-cyan-400 bg-cyan-500/10' : 'border-slate-800 text-gray-500'}`}>Recovery Phrase</button>
+                <button onClick={() => setLoginTab('key')} className={`px-3 py-1 rounded-full border transition ${loginTab === 'key' ? 'border-cyan-500 text-cyan-400 bg-cyan-500/10' : 'border-slate-800 text-gray-500'}`}>Raw Private Key</button>
+              </div>
+
+              {loginTab === 'phrase' ? (
+                <textarea
+                  value={loginKey}
+                  onChange={(e) => setLoginKey(e.target.value)}
+                  placeholder="Enter your 12-word recovery phrase..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-cyan-500 focus:outline-none transition h-24 resize-none"
+                />
+              ) : (
+                <textarea
+                  value={loginKey}
+                  onChange={(e) => setLoginKey(e.target.value)}
+                  placeholder="-----BEGIN PRIVATE KEY-----"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-[10px] font-mono focus:border-cyan-500 focus:outline-none transition h-24 resize-none"
+                />
+              )}
+
+              <button
+                onClick={handleLogin}
+                disabled={loading}
+                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium hover:opacity-90 transition disabled:opacity-50 flex justify-center gap-2"
+              >
+                {loading ? <Loader2 className="animate-spin" /> : 'Decrypt & Login'}
+              </button>
+
+              <div className="text-center mt-4">
+                <button onClick={() => localStorage.clear()} className="text-[10px] text-gray-600 hover:text-red-400 flex items-center justify-center gap-1 mx-auto">
+                  <RefreshCw size={10} /> Clear Local Cache
                 </button>
               </div>
             </div>
+          )}
 
-            <div className="bg-slate-800/50 rounded-xl p-3 mb-6 border border-slate-800/50">
-              <div className="flex items-start gap-2 text-xs text-gray-400">
-                <Lock className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                <p>Your Private Key has been encrypted with this phrase and securely stored. You don't need to save the raw key if you keep this phrase safe.</p>
+          {/* --- VIEW: REGISTER STEP 1 (Generate) --- */}
+          {mode === 'register' && step === 'init' && (
+            <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold tracking-wider">Choose Username</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-3 w-5 h-5 text-gray-500" />
+                  <input
+                    value={regUsername}
+                    onChange={(e) => setRegUsername(e.target.value)}
+                    placeholder="@username"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white focus:border-cyan-500 focus:outline-none transition"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-500 mt-2">A unique 2048-bit RSA key pair will be generated for this identity.</p>
               </div>
+
+              <button
+                onClick={handleGenerateIdentity}
+                disabled={loading || !regUsername}
+                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium hover:opacity-90 transition disabled:opacity-50 flex justify-center gap-2"
+              >
+                {loading ? <Loader2 className="animate-spin" /> : 'Generate Identity'}
+              </button>
             </div>
+          )}
 
-            <button
-              onClick={handleRegisterComplete}
-              disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl hover:from-cyan-600 hover:to-blue-700 transition shadow-lg shadow-cyan-500/20 flex justify-center items-center"
-            >
-              {loading ? <Loader2 className="animate-spin" /> : 'I Have Saved My Phrase'}
-            </button>
+          {/* --- VIEW: REGISTER STEP 2 (Save Keys) --- */}
+          {mode === 'register' && step === 'keys_generated' && (
+            <div className="space-y-4 animate-in fade-in zoom-in-95">
+              <div className="text-center">
+                <div className="w-12 h-12 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-2">
+                  <ShieldCheck className="w-6 h-6 text-green-500" />
+                </div>
+                <h3 className="text-white font-bold">Identity Generated</h3>
+                <p className="text-xs text-gray-400">Save this phrase. It is the ONLY way to recover your account.</p>
+              </div>
 
-          </div>
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 relative group">
+                <p className="font-mono text-lg text-cyan-400 text-center leading-relaxed">{generatedPhrase}</p>
+                <button
+                  onClick={handleCopy}
+                  className="absolute top-2 right-2 p-2 bg-slate-800 rounded-lg text-gray-300 hover:text-white transition opacity-0 group-hover:opacity-100"
+                >
+                  {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                </button>
+              </div>
+
+              <div className="bg-slate-800/50 p-3 rounded-lg flex gap-3 items-start">
+                <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0" />
+                <p className="text-[10px] text-gray-300 leading-tight">
+                  We do not store your private key. If you lose this phrase, your account and messages are lost forever.
+                </p>
+              </div>
+
+              <button
+                onClick={handlePhraseSaved}
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition flex justify-center items-center gap-2"
+              >
+                I Have Saved It <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
+
+          {/* --- VIEW: REGISTER STEP 3 (Profile Setup) --- */}
+          {mode === 'register' && step === 'profile_setup' && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+              <div className="text-center">
+                <h3 className="text-white font-bold text-xl">Setup Profile</h3>
+                <p className="text-xs text-gray-400">Customize how others see you</p>
+              </div>
+
+              <div className="flex flex-col items-center gap-4">
+                <div className={`w-24 h-24 rounded-full bg-gradient-to-br ${avatarColor} flex items-center justify-center shadow-2xl`}>
+                  <span className="text-4xl text-white font-bold">{displayName ? displayName[0].toUpperCase() : '?'}</span>
+                </div>
+
+                <div className="flex gap-2">
+                  {colors.map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setAvatarColor(c)}
+                      className={`w-6 h-6 rounded-full bg-gradient-to-br ${c} ${avatarColor === c ? 'ring-2 ring-white scale-110' : 'opacity-50 hover:opacity-100'} transition`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1 uppercase font-bold tracking-wider">Display Name</label>
+                <input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="e.g. Alice"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-cyan-500 focus:outline-none transition"
+                />
+              </div>
+
+              <button
+                onClick={handleCompleteRegistration}
+                disabled={loading || !displayName}
+                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-medium hover:opacity-90 transition disabled:opacity-50 flex justify-center gap-2"
+              >
+                {loading ? <Loader2 className="animate-spin" /> : 'Complete Setup'}
+              </button>
+            </div>
+          )}
+
         </div>
-      )}
+      </div>
     </div>
   );
 }
